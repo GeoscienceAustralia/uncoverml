@@ -1,0 +1,70 @@
+learning:
+  algorithm: xgbquantile
+  arguments:
+    target_transform: standardise
+    max_depth: 3
+    booster: gbtree
+    learning_rate: 0.1
+    n_estimators: 100
+    silent: True
+    objective: reg:linear
+    nthread: 1
+    gamma: 0
+    min_child_weight: 1
+    max_delta_step: 0 
+    subsample: 1
+    colsample_bytree: 1
+    colsample_bylevel: 1
+    reg_alpha: 0
+    reg_lambda: 1
+    scale_pos_weight: 1
+    n_jobs: -1
+    base_score: 0.5
+    random_state: 1
+    quant_alpha: 0.95
+    quant_delta_upper: 1.0
+    quant_thres_upper: 5.0
+    quant_var_upper: 3.0
+    quant_delta_lower: 1.0
+    quant_thres_lower: 6.0
+    quant_var_lower: 5.0
+
+features:
+  - type: ordinal
+    files:
+      - path: $UNCOVERML_SRC/tests/test_data/sirsam/covariates/Clim_Prescott_LindaGregory.tif
+      - path: $UNCOVERML_SRC/tests/test_data/sirsam/covariates/U_15v1.tif
+      - path: $UNCOVERML_SRC/tests/test_data/sirsam/covariates/U_TH_15.tif
+      - path: $UNCOVERML_SRC/tests/test_data/sirsam/covariates/dem_foc2.tif
+      - path: $UNCOVERML_SRC/tests/test_data/sirsam/covariates/er_depg.tif
+      - path: $UNCOVERML_SRC/tests/test_data/sirsam/covariates/gg_clip.tif
+      - path: $UNCOVERML_SRC/tests/test_data/sirsam/covariates/k_15v5.tif
+      - path: $UNCOVERML_SRC/tests/test_data/sirsam/covariates/tpi_300.tif
+    transforms:
+      - centre
+    imputation: none
+
+targets:
+  file: $UNCOVERML_SRC/tests/test_data/sirsam/targets/geochem_sites_log.shp
+  property: Cr_log
+
+final_transform: 
+    imputation: mean
+    transforms:
+      - log 
+
+validation:
+  feature_rank: False
+  k-fold:
+    parallel: True
+    folds: 5
+    random_seed: 1
+
+prediction:
+  quantiles: 0.95
+  outbands: 4
+
+output:
+  directory: ./xgbquantile_out
+  plot_correlation: True
+  plot_target_scaling: True

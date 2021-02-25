@@ -18,10 +18,10 @@
 """
 import logging
 import inspect
-
+from functools import partial
 import numpy as np
 from scipy.integrate import fixed_quad
-from scipy.stats import norm, gamma
+from scipy.stats import norm
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, RationalQuadratic
@@ -30,21 +30,16 @@ from sklearn.linear_model import (HuberRegressor,
                                   ElasticNet,
                                   SGDRegressor)
 from sklearn.svm import SVR
-from sklearn.metrics import r2_score
 from xgboost.sklearn import XGBRegressor
-# from catboost import CatBoostRegressor
 from uncoverml.models import RandomForestRegressor, QUADORDER, \
-    _normpdf, TagsMixin, SGDApproxGP, PredictDistMixin, \
-    MutualInfoMixin
-from revrand.slm import StandardLinearModel
-from revrand.basis_functions import LinearBasis
-from revrand.btypes import Parameter, Positive
+    _normpdf, TagsMixin, SGDApproxGP
 from uncoverml.transforms import target as transforms
-# import copy as cp
+
 log = logging.getLogger(__name__)
 
 # from sklearn.linear_model._stochastic_gradient
 DEFAULT_EPSILON = 0.1
+
 
 class TransformMixin:
 
@@ -66,7 +61,7 @@ class TransformMixin:
                 Ey_t, std_t = super().predict(X, return_std=return_std)
 
                 return self.target_transform.itransform(Ey_t), \
-                    self.target_transform.itransform(std_t)
+                       self.target_transform.itransform(std_t)
 
         Ey_t = self._notransform_predict(X, *args, **kwargs)
         return self.target_transform.itransform(Ey_t)
@@ -126,7 +121,6 @@ class TransformPredictDistMixin(TransformMixin):
 
 
 class TransformedSGDRegressor(TransformPredictDistMixin, SGDRegressor, TagsMixin):
-
     """
     Linear elastic net regression model using
     Stochastic Gradient Descent (SGD).
@@ -138,7 +132,6 @@ class TransformedSGDRegressor(TransformPredictDistMixin, SGDRegressor, TagsMixin
                  learning_rate="invscaling", eta0=0.01, power_t=0.25,
                  warm_start=False, average=False,
                  target_transform='identity'):
-
         super(TransformedSGDRegressor, self).__init__(
             loss=loss,
             penalty=penalty,
@@ -194,7 +187,7 @@ class TransformedGPRegressor(TransformPredictDistMixin, GaussianProcessRegressor
         Ey, std_t = super().predict(X, return_std=True)
         ql, qu = norm.interval(interval, loc=Ey, scale=std_t)
 
-        return Ey, std_t**2, ql, qu
+        return Ey, std_t ** 2, ql, qu
 
     def predict(self, X, *args, **kwargs):
         return self.predict_dist(X)[0]
@@ -222,7 +215,6 @@ class TransformedForestRegressor(TransformPredictDistMixin,
                  verbose=0,
                  warm_start=False,
                  ):
-
         super(TransformedForestRegressor, self).__init__(
             n_estimators=n_estimators,
             criterion=criterion,
@@ -260,7 +252,6 @@ class TransformedGradientBoost(TransformMixin, GradientBoostingRegressor,
                  random_state=None,
                  max_features=None, alpha=0.9, verbose=0, max_leaf_nodes=None,
                  warm_start=False, presort='auto'):
-
         super(TransformedGradientBoost, self).__init__(
             loss=loss,
             learning_rate=learning_rate,
@@ -342,7 +333,6 @@ class TransformedSGDApproxGP(TransformMixin, SGDApproxGP, TagsMixin):
 
 
 class TransformedOLS(TransformMixin, TagsMixin, LinearRegression):
-
     """
     OLS. Suitable for small learning jobs.
     """
@@ -380,7 +370,7 @@ class TransformedElasticNet(TransformMixin, TagsMixin, ElasticNet):
             normalize=normalize, precompute=precompute, max_iter=max_iter,
             copy_X=copy_X, tol=tol, warm_start=warm_start, positive=positive,
             random_state=random_state, selection=selection
-            )
+        )
 
 
 class Huber(TransformMixin, TagsMixin, HuberRegressor):
@@ -398,20 +388,19 @@ class Huber(TransformMixin, TagsMixin, HuberRegressor):
         super(Huber, self).__init__(
             epsilon=epsilon, alpha=alpha, fit_intercept=fit_intercept,
             max_iter=max_iter, tol=tol, warm_start=warm_start
-            )
+        )
 
 
 class XGBoost(TransformMixin, TagsMixin, XGBRegressor):
 
     def __init__(self, target_transform='identity',
                  max_depth=3, learning_rate=0.1, n_estimators=100,
-                 silent=True, objective="reg:linear",
+                 silent=True, objective="reg:linear", booster='gbtree',
                  nthread=1, gamma=0, min_child_weight=1,
                  max_delta_step=0,
                  subsample=1, colsample_bytree=1, colsample_bylevel=1,
                  reg_alpha=0, reg_lambda=1, scale_pos_weight=1, n_jobs=-1,
-                 base_score=0.5, random_state=1, missing=None,eval_metric='rmse',tree_method='auto'):
-
+                 base_score=0.5, random_state=1, missing=None, eval_metric='rmse', tree_method='auto', seed=1):
         if isinstance(target_transform, str):
             target_transform = transforms.transforms[target_transform]()
         self.target_transform = target_transform
@@ -420,6 +409,7 @@ class XGBoost(TransformMixin, TagsMixin, XGBRegressor):
                                       learning_rate=learning_rate,
                                       n_estimators=n_estimators,
                                       silent=silent,
+                                      booster=booster,
                                       objective=objective,
                                       nthread=nthread,
                                       gamma=gamma,
@@ -436,7 +426,132 @@ class XGBoost(TransformMixin, TagsMixin, XGBRegressor):
                                       missing=missing,
                                       n_jobs=n_jobs,
                                       eval_metric=eval_metric,
-                                      tree_method=tree_method)
+                                      tree_method=tree_method,
+                                      seed=seed)
+
+
+class XGBQuantile(XGBoost):
+    def __init__(self, target_transform='identity',
+                 quant_alpha=0.95, quant_delta=1.0, quant_thres=1.0, quant_var=1.0, base_score=0.5,
+                 booster='gbtree', colsample_bylevel=1,
+                 colsample_bytree=1, gamma=0, learning_rate=0.1, max_delta_step=0, max_depth=3, min_child_weight=1,
+                 missing=None, n_estimators=100,
+                 n_jobs=1, nthread=None, objective='reg:linear', random_state=0, reg_alpha=0, reg_lambda=1,
+                 scale_pos_weight=1, seed=None, silent=True, subsample=1, eval_metric='rmse', tree_method='auto'):
+        self.quant_alpha = quant_alpha
+        self.quant_delta = quant_delta
+        self.quant_thres = quant_thres
+        self.quant_var = quant_var
+
+        super(XGBQuantile, self).__init__(
+            target_transform=target_transform,
+            base_score=base_score, booster=booster, colsample_bylevel=colsample_bylevel,
+            colsample_bytree=colsample_bytree, gamma=gamma, learning_rate=learning_rate,
+            max_delta_step=max_delta_step,
+            max_depth=max_depth, min_child_weight=min_child_weight, missing=missing,
+            n_estimators=n_estimators,
+            n_jobs=n_jobs, nthread=nthread, objective=objective, random_state=random_state,
+            reg_alpha=reg_alpha, reg_lambda=reg_lambda, scale_pos_weight=scale_pos_weight, seed=seed,
+            silent=silent, subsample=subsample, eval_metric=eval_metric, tree_method=tree_method
+        )
+
+    def fit(self, X, y, **kwargs):
+        super().set_params(objective=partial(XGBQuantile.quantile_loss, alpha=self.quant_alpha, delta=self.quant_delta,
+                                             threshold=self.quant_thres, var=self.quant_var))
+        super().fit(X, y)
+        return self
+
+    def predict(self, X, **kwargs):
+        return super().predict(X)
+
+    def score(self, X, y, **kwargs):
+        y_pred = super().predict(X)
+        score = XGBQuantile.quantile_score(y, y_pred, self.quant_alpha)
+        score = 1. / score
+        return score
+
+    @staticmethod
+    def quantile_loss(y_true, y_pred, alpha, delta, threshold, var):
+        x = y_true - y_pred
+        grad = (x < (alpha - 1.0) * delta) * (1.0 - alpha) - (
+                (x >= (alpha - 1.0) * delta) & (x < alpha * delta)) * x / delta - alpha * (x > alpha * delta)
+        hess = ((x >= (alpha - 1.0) * delta) & (x < alpha * delta)) / delta
+
+        grad = (np.abs(x) < threshold) * grad - (np.abs(x) >= threshold) * (
+                2 * np.random.randint(2, size=len(y_true)) - 1.0) * var
+        hess = (np.abs(x) < threshold) * hess + (np.abs(x) >= threshold)
+        return grad, hess
+
+    @staticmethod
+    def original_quantile_loss(y_true, y_pred, alpha, delta):
+        x = y_true - y_pred
+        grad = (x < (alpha - 1.0) * delta) * (1.0 - alpha) - (
+                (x >= (alpha - 1.0) * delta) & (x < alpha * delta)) * x / delta - alpha * (x > alpha * delta)
+        hess = ((x >= (alpha - 1.0) * delta) & (x < alpha * delta)) / delta
+        return grad, hess
+
+    @staticmethod
+    def quantile_score(y_true, y_pred, alpha):
+        score = XGBQuantile.quantile_cost(x=y_true - y_pred, alpha=alpha)
+        score = np.sum(score)
+        return score
+
+    @staticmethod
+    def quantile_cost(x, alpha):
+        return (alpha - 1.0) * x * (x < 0) + alpha * x * (x >= 0)
+
+    @staticmethod
+    def get_split_gain(gradient, hessian, l=1):
+        split_gain = list()
+        for i in range(gradient.shape[0]):
+            split_gain.append(np.sum(gradient[:i]) / (np.sum(hessian[:i]) + l) + np.sum(gradient[i:]) / (
+                    np.sum(hessian[i:]) + l) - np.sum(gradient) / (np.sum(hessian) + l))
+
+        return np.array(split_gain)
+
+
+class XGBQuantileWrapper(TagsMixin):
+    def __init__(
+            self,
+            quant_alpha=0.95,
+            quant_delta_upper=1.0, quant_thres_upper=1.0, quant_var_upper=1.0,
+            quant_delta_lower=1.0, quant_thres_lower=1.0, quant_var_lower=1.0,
+            **kwargs):
+        self.quant_alpha = quant_alpha
+        self.xgboost = XGBoost(** kwargs)
+        self.xgboost_quantile_upper = XGBQuantile(
+            quant_alpha=quant_alpha, quant_delta=quant_delta_upper,
+            quant_thres=quant_thres_upper, quant_var=quant_var_upper,
+            ** kwargs
+        )
+        self.xgboost_quantile_lower = XGBQuantile(
+            quant_alpha=1-quant_alpha, quant_delta=quant_delta_lower,
+            quant_thres=quant_thres_lower, quant_var=quant_var_lower,
+            ** kwargs
+        )
+
+    @staticmethod
+    def collect_prediction(regressor, X_test):
+        y_pred = regressor.predict(X_test)
+        return y_pred
+
+    def fit(self, X, y, **kwargs):
+        self.xgboost.fit(X, y, **kwargs)
+        self.xgboost_quantile_upper.fit(X, y, **kwargs)
+        self.xgboost_quantile_lower.fit(X, y, **kwargs)
+
+    def predict(self, X):
+        return self.predict_dist(X)[0]
+
+    def predict_dist(self, X, *args, **kwargs):
+        Ey = self.xgboost.predict(X)
+
+        ql = self.collect_prediction(self.xgboost_quantile_lower, X)
+        qu = self.collect_prediction(self.xgboost_quantile_upper, X)
+        # divide qu - ql by the normal distribution Z value diff between the quantiles, square for variance
+        Vy = ((qu - ql)/(norm.ppf(self.quant_alpha) - norm.ppf(1-self.quant_alpha))) ** 2
+
+        return Ey, Vy, ql, qu
 
 
 transformed_modelmaps = {
@@ -448,7 +563,8 @@ transformed_modelmaps = {
     'ols': TransformedOLS,
     'elasticnet': TransformedElasticNet,
     'huber': Huber,
-    'xgboost': XGBoost
+    'xgboost': XGBoost,
+    'xgbquantile': XGBQuantileWrapper
 }
 
 # scikit-learn kernels
